@@ -1,0 +1,27 @@
+BrowserRecorder is a simple browser recorder class.
+
+Based on org.montemedia ScreenRecorder ((c) 2011 Werner Randelshofer, Immensee, Switzerland).
+
+In contrast to the original ScreenRecorder, that provide functionality
+to recording from all screen, BrowserRecorder records video directly from
+browser window, even if not currently active, focused or on top of screen device.
+
+Licensed
+
+Licensed under LGPL v.3
+
+Build
+
+Build is done using maven.
+First of all you'll need to install the Monte Media Library jar artifact in your repository
+as it's not currently available at Maven Central.
+Download http://www.randelshofer.ch/monte/files/MonteMedia-0.7.7src-cc.zip and uncompress it.
+
+Then install the library by running:
+$ mvn install:install-file -Dfile=/the/path/to/monte-cc.jar -DgroupId=org.monte
+-DartifactId=screen-recorder -Dversion=1.1-SNAPSHOT -Dpackaging=jar
+
+Now you are ready to build the browser recorder by running:
+$ mvn package
+
+That generates the jar file in the  target  directory.
