@@ -4,10 +4,14 @@ import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.platform.win32.GDI32;
 import com.sun.jna.platform.win32.User32;
-import com.sun.jna.platform.win32.WinDef.*;
+import com.sun.jna.platform.win32.WinDef.DWORD;
+import com.sun.jna.platform.win32.WinDef.HBITMAP;
+import com.sun.jna.platform.win32.WinDef.HDC;
+import com.sun.jna.platform.win32.WinDef.HWND;
 import com.sun.jna.platform.win32.WinGDI;
 import com.sun.jna.platform.win32.WinGDI.BITMAPINFO;
 import com.sun.jna.platform.win32.WinNT.HANDLE;
+import com.sun.jna.platform.win32.WinUser;
 import com.sun.jna.win32.W32APIOptions;
 
 import java.awt.*;
@@ -65,57 +69,51 @@ public class CaptureWindow {
     }
 
     public BufferedImage capture(HWND[] hWnds) {
-        BufferedImage image = null;
+        BufferedImage image;
         BufferedImage newImage;
-        int maxWidth = 0;
-        int maxHeight = 0;
-        RECT bounds = new RECT();
+        WinUser.RECT[] windowsRect = new WinUser.RECT[hWnds.length];
+        int maxWidth = 1;
+        int maxHeight = 1;
 
-        for (HWND hWnd : hWnds) {
-            User32Extra.INSTANCE.GetClientRect(hWnd, bounds);
+        for (int i = hWnds.length-1; i >= 0; i--) {
+            WinUser.WINDOWINFO windowInfo = new WinUser.WINDOWINFO();
 
-            int width = bounds.right - bounds.left;
-            int height = bounds.bottom - bounds.top;
+            User32.INSTANCE.GetWindowInfo(hWnds[i], windowInfo);
+            windowsRect[i] = windowInfo.rcClient;
+
+            int width = windowsRect[i].right - windowsRect[i].left;
+            int height = windowsRect[i].bottom - windowsRect[i].top;
 
             if (width < 1 || height < 1) {
                 continue;
             }
 
-            if (width <= maxWidth && height <= maxHeight) {
+            if(windowsRect[i].right > maxWidth || windowsRect[i].bottom > maxHeight) {
+                maxWidth = windowsRect[i].right;
+                maxHeight = windowsRect[i].bottom;
+            }
+        }
+
+        image = new BufferedImage(maxWidth, maxHeight, BufferedImage.TYPE_INT_RGB);
+
+        for (int i = hWnds.length-1; i >= 0; i--) {
+            int width = windowsRect[i].right - windowsRect[i].left;
+            int height = windowsRect[i].bottom - windowsRect[i].top;
+
+            if (width < 1 || height < 1) {
                 continue;
             }
 
-            if (width > maxWidth && height > maxHeight) {
-                maxWidth = width;
-                maxHeight = height;
-            }
-
-            newImage = capture(hWnd, width, height);
-            if (image != null) {
-                newImage.getGraphics().drawImage(image, 0, 0, null);
-            }
-            image = newImage;
-        }
-
-        if(image == null) {
-            image = getDefaultImage();
+            newImage = capture(hWnds[i], width, height);
+            image.getGraphics().drawImage(newImage, windowsRect[i].left, windowsRect[i].top, null);
         }
 
         return image;
     }
 
-    public BufferedImage getDefaultImage() {
-        return defaultImage;
-    }
-
     public interface GDI32Extra extends GDI32 {
         GDI32Extra INSTANCE = (GDI32Extra) Native.loadLibrary("gdi32", GDI32Extra.class, W32APIOptions.DEFAULT_OPTIONS);
         boolean BitBlt(HDC hObject, int nXDest, int nYDest, int nWidth, int nHeight, HDC hObjectSource, int nXSrc, int nYSrc, DWORD dwRop);
-    }
-
-    public interface User32Extra extends User32 {
-        User32Extra INSTANCE = (User32Extra) Native.loadLibrary("user32", User32Extra.class, W32APIOptions.DEFAULT_OPTIONS);
-        boolean GetClientRect(HWND hWnd, RECT rect);
     }
 
     public interface WinGDIExtra extends WinGDI {

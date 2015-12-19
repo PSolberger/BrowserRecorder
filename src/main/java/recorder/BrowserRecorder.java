@@ -30,19 +30,16 @@ import org.monte.media.beans.AbstractStateModel;
 import org.monte.media.color.Colors;
 import org.monte.media.converter.CodecChain;
 import org.monte.media.converter.ScaleImageCodec;
-import org.monte.media.image.Images;
 import org.monte.media.math.Rational;
 import org.monte.media.quicktime.QuickTimeWriter;
+import recorder.params.RecorderParams;
 
 import javax.sound.sampled.*;
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.AWTEventListener;
-import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.nio.ByteOrder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -50,14 +47,11 @@ import java.util.Date;
 import java.util.concurrent.*;
 
 import static java.lang.Math.max;
-import static org.monte.media.AudioFormatKeys.*;
 import static org.monte.media.AudioFormatKeys.EncodingKey;
 import static org.monte.media.AudioFormatKeys.FrameRateKey;
-import static org.monte.media.AudioFormatKeys.KeyFrameIntervalKey;
-import static org.monte.media.AudioFormatKeys.MIME_AVI;
-import static org.monte.media.AudioFormatKeys.MIME_QUICKTIME;
 import static org.monte.media.AudioFormatKeys.MediaTypeKey;
 import static org.monte.media.AudioFormatKeys.MimeTypeKey;
+import static org.monte.media.AudioFormatKeys.*;
 import static org.monte.media.BufferFlag.SAME_DATA;
 import static org.monte.media.VideoFormatKeys.*;
 
@@ -69,25 +63,9 @@ public class BrowserRecorder extends AbstractStateModel {
     private State state = State.DONE;
     private String stateMessage = null;
     /**
-     * "Encoding" for black mouse cursor.
-     */
-    public final static String ENCODING_BLACK_CURSOR = "black";
-    /**
-     * "Encoding" for white mouse cursor.
-     */
-    public final static String ENCODING_WHITE_CURSOR = "white";
-    /**
-     * "Encoding" for yellow mouse cursor.
-     */
-    public final static String ENCODING_YELLOW_CURSOR = "yellow";
-    /**
      * The file format. "AVI" or "QuickTime"
      */
     private Format fileFormat;
-    /**
-     * The input video format for cursor capture. "black" or "white".
-     */
-    protected Format mouseFormat;
     /**
      * The input video format for screen capture.
      */
@@ -97,7 +75,7 @@ public class BrowserRecorder extends AbstractStateModel {
      */
     private Format audioFormat;
     /**
-     * The bounds of the graphics device that we capture with AWT Robot.
+     * The bounds of the graphics device that we capture.
      */
     private Rectangle captureArea;
     /**
@@ -117,17 +95,9 @@ public class BrowserRecorder extends AbstractStateModel {
      */
     private long fileStartTime;
     /**
-     * Holds the mouse captures made with {@code MouseInfo}.
-     */
-    private ArrayBlockingQueue<Buffer> mouseCaptures;
-    /**
      * Timer for screen captures.
      */
     private ScheduledThreadPoolExecutor screenCaptureTimer;
-    /**
-     * Timer for mouse captures.
-     */
-    protected ScheduledThreadPoolExecutor mouseCaptureTimer;
     /**
      * Thread for audio capture.
      */
@@ -137,18 +107,8 @@ public class BrowserRecorder extends AbstractStateModel {
      */
     private volatile Thread writerThread;
     /**
-     * Mouse cursor.
-     */
-    private BufferedImage cursorImg;
-    private BufferedImage cursorImgPressed;
-    /**
-     * Hot spot of the mouse cursor in cursorImg.
-     */
-    private Point cursorOffset;
-    /**
      * Object for thread synchronization.
      */
-    private final Object sync = new Object();
     private ArrayBlockingQueue<Buffer> writerQueue;
     /**
      * This codec encodes a video frame.
@@ -156,9 +116,9 @@ public class BrowserRecorder extends AbstractStateModel {
     private Codec frameEncoder;
     /**
      * outputTime and ffrDuration are needed for conversion of the video stream
-     * from variable frame rate to fixed frame rate. FIXME - Do this with a
-     * CodecChain.
+     * from variable frame rate to fixed frame rate.
      */
+    // TODO FIXME - Do this with a CodecChain.
     private Rational outputTime;
     private Rational ffrDuration;
     private ArrayList<File> recordedFiles;
@@ -173,19 +133,15 @@ public class BrowserRecorder extends AbstractStateModel {
     /**
      * The device from which screen captures are generated.
      */
-    private GraphicsDevice captureDevice;
     private AudioGrabber audioGrabber;
     private BrowserGrabber browserGrabber;
-    protected MouseGrabber mouseGrabber;
     private ScheduledFuture audioFuture;
     private ScheduledFuture screenFuture;
-    protected ScheduledFuture mouseFuture;
     private int browserProcessID;
     /**
      * Where to store the movie.
      */
     protected File movieFolder;
-    private AWTEventListener awtEventListener;
     private long maxRecordingTime = 60 * 60 * 1000;
     private long maxFileSize = Long.MAX_VALUE;
     /**
@@ -195,150 +151,23 @@ public class BrowserRecorder extends AbstractStateModel {
 
     /**
      * Creates a browser recorder.
-     */
-    public BrowserRecorder() throws IOException, AWTException {
-        this(GraphicsEnvironment
-                        .getLocalGraphicsEnvironment().getDefaultScreenDevice()
-                        .getDefaultConfiguration(),
-                new Format(MediaTypeKey, MediaType.FILE, MimeTypeKey,
-                        MIME_AVI),
-                new Format(MediaTypeKey, MediaType.VIDEO,
-                        EncodingKey, ENCODING_AVI_TECHSMITH_SCREEN_CAPTURE,
-                        CompressorNameKey, ENCODING_AVI_TECHSMITH_SCREEN_CAPTURE,
-                        DepthKey, 24,
-                        FrameRateKey, Rational.valueOf(15),
-                        QualityKey, 0.5f,
-                        KeyFrameIntervalKey, 15 * 60),
-                null,
-                null);
-    }
-
-    /**
-     * Creates a browser recorder.
-     */
-    public BrowserRecorder(File movieFolder) throws IOException, AWTException {
-        this(GraphicsEnvironment
-                        .getLocalGraphicsEnvironment().getDefaultScreenDevice()
-                        .getDefaultConfiguration(),
-                null,
-                new Format(MediaTypeKey, MediaType.FILE, MimeTypeKey,
-                        MIME_AVI),
-                new Format(MediaTypeKey, MediaType.VIDEO,
-                        EncodingKey, ENCODING_AVI_TECHSMITH_SCREEN_CAPTURE,
-                        CompressorNameKey, ENCODING_AVI_TECHSMITH_SCREEN_CAPTURE,
-                        DepthKey, 24,
-                        FrameRateKey, Rational.valueOf(15),
-                        QualityKey, 0.5f,
-                        KeyFrameIntervalKey, 15 * 60),
-                null,
-                null,
-                movieFolder);
-    }
-
-    /**
-     * Creates a browser recorder.
      *
-     * @param cfg Graphics configuration of the capture screen.
+     * @param recorderParams - instance of RecorderParams class
      */
-    public BrowserRecorder(GraphicsConfiguration cfg) throws IOException, AWTException {
-        this(cfg,
-                // the file format
-                new Format(MediaTypeKey, FormatKeys.MediaType.FILE,
-                        MimeTypeKey, MIME_QUICKTIME),
-                //
-                // the output format for screen capture
-                new Format(MediaTypeKey, FormatKeys.MediaType.VIDEO,
-                        EncodingKey, ENCODING_QUICKTIME_ANIMATION,
-                        CompressorNameKey, COMPRESSOR_NAME_QUICKTIME_ANIMATION,
-                        DepthKey, 24, FrameRateKey, new Rational(15, 1)),
-                //
-                // the output format for mouse capture
-                new Format(MediaTypeKey, MediaType.VIDEO,
-                        EncodingKey, ENCODING_BLACK_CURSOR,
-                        FrameRateKey, new Rational(30, 1)),
-                //
-                // the output format for audio capture
-                new Format(MediaTypeKey, MediaType.AUDIO,
-                        EncodingKey, ENCODING_QUICKTIME_TWOS_PCM,
-                        FrameRateKey, new Rational(48000, 1),
-                        SampleSizeInBitsKey, 16,
-                        ChannelsKey, 2, SampleRateKey, new Rational(48000, 1),
-                        SignedKey, true, ByteOrderKey, ByteOrder.BIG_ENDIAN));
-    }
-
-    /**
-     * Creates a browser recorder.
-     *
-     * @param cfg Graphics configuration of the capture screen.
-     * @param fileFormat The file format "AVI" or "QuickTime".
-     * @param screenFormat The video format for screen capture.
-     * @param mouseFormat The video format for mouse capture. The
-     * {@code EncodingKey} must be ENCODING_BLACK_CURSOR or
-     * ENCODING_WHITE_CURSOR. The {@code SampleRateKey} can be independent from
-     * the {@code screenFormat}. Specify null if you don't want to capture the
-     * mouse cursor.
-     * @param audioFormat The audio format for audio capture. Specify null if
-     * you don't want audio capture.
-     */
-    public BrowserRecorder(GraphicsConfiguration cfg,
-                           Format fileFormat,
-                           Format screenFormat,
-                           Format mouseFormat,
-                           Format audioFormat) throws IOException, AWTException {
-        this(cfg, null, fileFormat, screenFormat, mouseFormat, audioFormat, null);
-    }
-
-    /**
-     * Creates a browser recorder.
-     *
-     * @param cfg Graphics configuration of the capture screen.
-     * @param captureArea Defines the area of the screen that shall be captured.
-     * @param fileFormat The file format "AVI" or "QuickTime".
-     * @param screenFormat The video format for screen capture.
-     * @param mouseFormat The video format for mouse capture. The
-     * {@code EncodingKey} must be ENCODING_BLACK_CURSOR or
-     * ENCODING_WHITE_CURSOR. The {@code SampleRateKey} can be independent from
-     * the {@code screenFormat}. Specify null if you don't want to capture the
-     * mouse cursor.
-     * @param audioFormat The audio format for audio capture. Specify null if
-     * you don't want audio capture.
-     * @param movieFolder Where to store the movie
-     */
-    public BrowserRecorder(GraphicsConfiguration cfg,
-                           Rectangle captureArea,
-                           Format fileFormat,
-                           Format screenFormat,
-                           Format mouseFormat,
-                           Format audioFormat,
-                           File movieFolder) throws IOException, AWTException {
-
-        this.fileFormat = fileFormat;
-        this.screenFormat = screenFormat;
-        this.mouseFormat = mouseFormat;
-        if (this.mouseFormat == null) {
-            this.mouseFormat = new Format(FrameRateKey, new Rational(0, 0), EncodingKey, ENCODING_BLACK_CURSOR);
-        }
-        this.audioFormat = audioFormat;
+    public BrowserRecorder(RecorderParams recorderParams) throws IOException, AWTException {
+        this.fileFormat = recorderParams.getFileFormat();
+        this.screenFormat = recorderParams.getScreenFormat();
+        this.audioFormat = recorderParams.getAudioFormat();
         this.recordedFiles = new ArrayList<File>();
-        this.captureDevice = cfg.getDevice();
-        this.captureArea = (captureArea == null) ? cfg.getBounds() : captureArea;
-        if (mouseFormat != null && mouseFormat.get(FrameRateKey).intValue() > 0) {
-            mouseCaptures = new ArrayBlockingQueue<Buffer>(mouseFormat.get(FrameRateKey).intValue() * 2);
-            if (this.mouseFormat.get(EncodingKey).equals(ENCODING_BLACK_CURSOR)) {
-                cursorImg = Images.toBufferedImage(Images.createImage(BrowserRecorder.class, "images/Cursor.black.png"));
-                cursorImgPressed = Images.toBufferedImage(Images.createImage(BrowserRecorder.class, "images/Cursor.black.pressed.png"));
-            } else if (this.mouseFormat.get(EncodingKey).equals(ENCODING_YELLOW_CURSOR)) {
-                cursorImg = Images.toBufferedImage(Images.createImage(BrowserRecorder.class, "images/Cursor.yellow.png"));
-                cursorImgPressed = Images.toBufferedImage(Images.createImage(BrowserRecorder.class, "images/Cursor.yellow.pressed.png"));
-            } else {
-                cursorImg = Images.toBufferedImage(Images.createImage(BrowserRecorder.class, "images/Cursor.white.png"));
-                cursorImgPressed = Images.toBufferedImage(Images.createImage(BrowserRecorder.class, "images/Cursor.white.pressed.png"));
-            }
-            cursorOffset = new Point(cursorImg.getWidth() / -2, cursorImg.getHeight() / -2);
-        }
-        setMovieFolder(movieFolder);
+        this.captureArea = recorderParams.getCaptureArea();
+        setMovieFolder(recorderParams.getMovieFolder());
     }
 
+    /**
+     * Set processID of windows, that needs to be recording.
+     * Recording will go for all visible windows of that process.
+     * @param processID - processID
+     */
     public void setCaptureWindowProcessID(int processID) {
         this.browserProcessID = processID;
         if(browserGrabber != null) {
@@ -364,7 +193,7 @@ public class BrowserRecorder extends AbstractStateModel {
         MovieWriter mw = w = Registry.getInstance().getWriter(fileFormat, f);
 
         // Create the video encoder
-        Rational videoRate = Rational.max(screenFormat.get(FrameRateKey), mouseFormat.get(FrameRateKey));
+        Rational videoRate = screenFormat.get(FrameRateKey);
         ffrDuration = videoRate.inverse();
         Format videoInputFormat = screenFormat.prepend(MediaTypeKey, MediaType.VIDEO,
                 EncodingKey, ENCODING_BUFFERED_IMAGE,
@@ -373,11 +202,9 @@ public class BrowserRecorder extends AbstractStateModel {
                 FrameRateKey, videoRate);
         Format videoOutputFormat = screenFormat.prepend(
                 FrameRateKey, videoRate,
-                MimeTypeKey, fileFormat.get(MimeTypeKey))//
-                //
-                .append(//
-                        WidthKey, captureArea.width,
-                        HeightKey, captureArea.height);
+                MimeTypeKey, fileFormat.get(MimeTypeKey),
+                WidthKey, captureArea.width,
+                HeightKey, captureArea.height);
 
         videoTrack = w.addTrack(videoOutputFormat);
         if (audioFormat != null) {
@@ -406,8 +233,7 @@ public class BrowserRecorder extends AbstractStateModel {
             frameEncoder = new CodecChain(sic, frameEncoder);
         }
 
-
-        // FIXME - There should be no need for format-specific code.
+        // TODO FIXME - There should be no need for format-specific code.
         if (screenFormat.get(DepthKey) == 8) {
             if (w instanceof AVIWriter) {
                 AVIWriter aviw = (AVIWriter) w;
@@ -441,15 +267,17 @@ public class BrowserRecorder extends AbstractStateModel {
      */
     protected File createMovieFile(Format fileFormat) throws IOException {
         if (!movieFolder.exists()) {
-            movieFolder.mkdirs();
+            if(!movieFolder.mkdirs()) {
+                throw new IOException("Can't create directory " + movieFolder.getAbsolutePath());
+            }
         } else if (!movieFolder.isDirectory()) {
             throw new IOException("\"" + movieFolder + "\" is not a directory.");
         }
 
-        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd 'at' HH.mm.ss");
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy_MM_dd_'at'_HH.mm.ss");
 
         return new File(movieFolder,//
-                "BrowserRecording " + dateFormat.format(new Date()) + "." + Registry.getInstance().getExtension(fileFormat));
+                "BrowserRecording_" + dateFormat.format(new Date()) + "." + Registry.getInstance().getExtension(fileFormat));
     }
 
     /**
@@ -503,9 +331,6 @@ public class BrowserRecorder extends AbstractStateModel {
                 stop();
                 throw ioe;
             }
-            if (mouseFormat != null && mouseFormat.get(FrameRateKey).intValue() > 0) {
-                startMouseCapture();
-            }
             if (audioFormat != null) {
                 try {
                     startAudioCapture();
@@ -538,22 +363,10 @@ public class BrowserRecorder extends AbstractStateModel {
     private static class BrowserGrabber implements Runnable {
 
         /**
-         * Previously draw mouse location. This is used to have the last mouse
-         * location at hand, when a new screen capture has been created, but the
-         * mouse has not been moved.
-         */
-        private Point prevDrawnMouseLocation = new Point(Integer.MAX_VALUE, Integer.MAX_VALUE);
-        private boolean prevMousePressed = false;
-        /**
-         * Holds the screen capture made with AWT Robot.
+         * Holds the screen capture.
          */
         private BufferedImage screenCapture;
         private BrowserRecorder recorder;
-        private ScheduledThreadPoolExecutor screenTimer;
-        /**
-         * The AWT Robot which we use for capturing the screen.
-         */
-        //private Robot robot;
         private Rectangle captureArea;
         /**
          *
@@ -570,18 +383,10 @@ public class BrowserRecorder extends AbstractStateModel {
          * Graphics object for drawing into {@code videoImg}.
          */
         private Graphics2D videoGraphics;
-        private final Format mouseFormat;
-        /**
-         * Holds the mouse captures made with {@code MouseInfo}.
-         */
-        private ArrayBlockingQueue<Buffer> mouseCaptures;
         /**
          * The time the previous screen frame was captured.
          */
         private Rational prevScreenCaptureTime;
-        private final Object sync;
-        private BufferedImage cursorImg, cursorImgPressed;
-        private Point cursorOffset;
         private int videoTrack;
         private long startTime;
         private volatile long stopTime = Long.MAX_VALUE;
@@ -604,12 +409,6 @@ public class BrowserRecorder extends AbstractStateModel {
             this.recorder = recorder;
             this.captureArea = recorder.captureArea;
             this.captureWindow = new CaptureWindow();
-            this.mouseFormat = recorder.mouseFormat;
-            this.mouseCaptures = recorder.mouseCaptures;
-            this.sync = recorder.sync;
-            this.cursorImg = recorder.cursorImg;
-            this.cursorImgPressed = recorder.cursorImgPressed;
-            this.cursorOffset = recorder.cursorOffset;
             this.videoTrack = recorder.videoTrack;
             this.prevScreenCaptureTime = new Rational(startTime, 1000);
             this.startTime = startTime;
@@ -639,7 +438,6 @@ public class BrowserRecorder extends AbstractStateModel {
                 grabWindow();
             } catch (Throwable ex) {
                 ex.printStackTrace();
-                screenTimer.shutdown();
                 recorder.recordingFailed(ex.getMessage());
             }
         }
@@ -669,87 +467,8 @@ public class BrowserRecorder extends AbstractStateModel {
 
             Buffer buf = new Buffer();
             buf.format = new Format(MediaTypeKey, MediaType.VIDEO, EncodingKey, ENCODING_BUFFERED_IMAGE);
-            // Generate video frames with mouse cursor painted on them
-            boolean hasMouseCapture = false;
-            if (mouseFormat != null && mouseFormat.get(FrameRateKey).intValue() > 0) {
-                while (!mouseCaptures.isEmpty() && mouseCaptures.peek().timeStamp.compareTo(new Rational(timeAfterCapture, 1000)) < 0) {
-                    Buffer mouseCapture = mouseCaptures.poll();
-                    if (mouseCapture.timeStamp.compareTo(prevScreenCaptureTime) > 0) {
-                        if (mouseCapture.timeStamp.compareTo(new Rational(timeBeforeCapture, 1000)) < 0) {
-                            previousScreenCapture = screenCapture;
-                            videoGraphics.drawImage(previousScreenCapture, 0, 0, null);
-                        }
 
-                        Point mcp = (Point) mouseCapture.data;
-                        prevMousePressed = (Boolean) mouseCapture.header;
-                        prevDrawnMouseLocation.setLocation(mcp.x - captureArea.x, mcp.y - captureArea.y);
-                        Point p = prevDrawnMouseLocation;
-
-                        long localStopTime = getStopTime();
-                        if (mouseCapture.timeStamp.compareTo(new Rational(localStopTime, 1000)) > 0) {
-                            break;
-                        }
-                        {
-                            hasMouseCapture = true;
-
-                            // draw cursor
-                            if (prevMousePressed) {
-                                videoGraphics.drawImage(cursorImgPressed, p.x + cursorOffset.x, p.y + cursorOffset.y, null);
-                            } else {
-                                videoGraphics.drawImage(cursorImg, p.x + cursorOffset.x, p.y + cursorOffset.y, null);
-                            }
-                            buf.clearFlags();
-                            buf.data = videoImg;
-                            buf.sampleDuration = mouseCapture.timeStamp.subtract(prevScreenCaptureTime);
-                            buf.timeStamp = prevScreenCaptureTime.subtract(new Rational(startTime, 1000));
-                            buf.track = videoTrack;
-                            buf.sequenceNumber = sequenceNumber++;
-
-                            // Fudge mouse position into the header
-                            buf.header = p.x == Integer.MAX_VALUE ? null : p;
-                            recorder.write(buf);
-                            prevScreenCaptureTime = mouseCapture.timeStamp;
-
-                            // erase cursor
-                            videoGraphics.drawImage(previousScreenCapture, //
-                                    p.x + cursorOffset.x, p.y + cursorOffset.y,//
-                                    p.x + cursorOffset.x + cursorImg.getWidth() - 1, p.y + cursorOffset.y + cursorImg.getHeight() - 1,//
-                                    p.x + cursorOffset.x, p.y + cursorOffset.y,//
-                                    p.x + cursorOffset.x + cursorImg.getWidth() - 1, p.y + cursorOffset.y + cursorImg.getHeight() - 1,//
-                                    null);
-                        }
-
-                    }
-                }
-
-                if (!hasMouseCapture && prevScreenCaptureTime.compareTo(new Rational(getStopTime(), 1000)) < 0) {
-                    Point p = prevDrawnMouseLocation;
-                    if (p != null) {
-                        if (prevMousePressed) {
-                            videoGraphics.drawImage(cursorImgPressed, p.x + cursorOffset.x, p.y + cursorOffset.y, null);
-                        } else {
-                            videoGraphics.drawImage(cursorImg, p.x + cursorOffset.x, p.y + cursorOffset.y, null);
-                        }
-                    }
-
-                    buf.data = videoImg;
-                    buf.sampleDuration = new Rational(timeAfterCapture, 1000).subtract(prevScreenCaptureTime);
-                    buf.timeStamp = prevScreenCaptureTime.subtract(new Rational(startTime, 1000));
-                    buf.track = videoTrack;
-                    buf.sequenceNumber = sequenceNumber++;
-                    buf.header = p.x == Integer.MAX_VALUE ? null : p;
-                    recorder.write(buf);
-                    prevScreenCaptureTime = new Rational(timeAfterCapture, 1000);
-                    if (p != null) {//erase cursor
-                        videoGraphics.drawImage(previousScreenCapture, //
-                                p.x + cursorOffset.x, p.y + cursorOffset.y,//
-                                p.x + cursorOffset.x + cursorImg.getWidth() - 1, p.y + cursorOffset.y + cursorImg.getHeight() - 1,//
-                                p.x + cursorOffset.x, p.y + cursorOffset.y,//
-                                p.x + cursorOffset.x + cursorImg.getWidth() - 1, p.y + cursorOffset.y + cursorImg.getHeight() - 1,//
-                                null);
-                    }
-                }
-            } else if (prevScreenCaptureTime.compareTo(new Rational(getStopTime(), 1000)) < 0) {
+            if (prevScreenCaptureTime.compareTo(new Rational(getStopTime(), 1000)) < 0) {
                 buf.data = videoImg;
                 buf.sampleDuration = new Rational(timeAfterCapture, 1000).subtract(prevScreenCaptureTime);
                 buf.timeStamp = prevScreenCaptureTime.subtract(new Rational(startTime, 1000));
@@ -772,165 +491,10 @@ public class BrowserRecorder extends AbstractStateModel {
     }
 
     /**
-     * Starts mouse capture.
-     */
-    protected void startMouseCapture() throws IOException {
-        mouseCaptureTimer = new ScheduledThreadPoolExecutor(1);
-        int delay = max(1, (int) (1000 / mouseFormat.get(FrameRateKey).doubleValue()));
-        mouseGrabber = new MouseGrabber(this, recordingStartTime, mouseCaptureTimer);
-        mouseFuture = mouseCaptureTimer.scheduleAtFixedRate(mouseGrabber, delay, delay, TimeUnit.MILLISECONDS);
-        final MouseGrabber mouseGrabberF = mouseGrabber;
-        awtEventListener = new AWTEventListener() {
-            public void eventDispatched(AWTEvent event) {
-                if (event.getID() == MouseEvent.MOUSE_PRESSED) {
-                    mouseGrabberF.setMousePressed(true);
-                } else if (event.getID() == MouseEvent.MOUSE_RELEASED) {
-                    mouseGrabberF.setMousePressed(false);
-                }
-            }
-        };
-        Toolkit.getDefaultToolkit().addAWTEventListener(awtEventListener, AWTEvent.MOUSE_EVENT_MASK);
-        mouseGrabber.setFuture(mouseFuture);
-    }
-
-    /**
-     * Stops mouse capturing. Use method {@link #waitUntilMouseCaptureStopped}
-     * to wait until the capturing stopped.
-     */
-    protected void stopMouseCapture() {
-        if (mouseCaptureTimer != null) {
-            mouseGrabber.setStopTime(recordingStopTime);
-        }
-        if (awtEventListener != null) {
-            Toolkit.getDefaultToolkit().removeAWTEventListener(awtEventListener);
-            awtEventListener = null;
-        }
-    }
-
-    /**
-     * Waits until mouse capturing stopped. Invoke this method only after you
-     * invoked {@link #stopMouseCapture}.
-     */
-    protected void waitUntilMouseCaptureStopped() throws InterruptedException {
-        if (mouseCaptureTimer != null) {
-            try {
-                mouseFuture.get();
-            } catch (InterruptedException ignore) {
-            } catch (CancellationException ignore) {
-            } catch (ExecutionException ignore) {
-            }
-            mouseCaptureTimer.shutdown();
-            mouseCaptureTimer.awaitTermination(5000, TimeUnit.MILLISECONDS);
-            mouseCaptureTimer = null;
-            mouseGrabber.close();
-            mouseGrabber = null;
-        }
-    }
-
-    protected static class MouseGrabber implements Runnable {
-
-        /**
-         * Previously captured mouse location. This is used to coalesce mouse
-         * captures if the mouse has not been moved.
-         */
-        private Point prevCapturedMouseLocation = new Point(Integer.MAX_VALUE, Integer.MAX_VALUE);
-        private ScheduledThreadPoolExecutor timer;
-        private BrowserRecorder recorder;
-        private GraphicsDevice captureDevice;
-        private Rectangle captureArea;
-        private BlockingQueue<Buffer> mouseCaptures;
-        private volatile long stopTime = Long.MAX_VALUE;
-        private long startTime;
-        private Format format;
-        private ScheduledFuture future;
-        private volatile boolean mousePressed;
-        private volatile boolean mouseWasPressed;
-        private volatile boolean mousePressedRecorded;
-
-        public MouseGrabber(BrowserRecorder recorder, long startTime, ScheduledThreadPoolExecutor timer) {
-            this.timer = timer;
-            this.format = recorder.mouseFormat;
-            this.captureDevice = recorder.captureDevice;
-            this.captureArea = recorder.captureArea;
-            this.mouseCaptures = recorder.mouseCaptures;
-            this.startTime = startTime;
-        }
-
-        public void setFuture(ScheduledFuture future) {
-            this.future = future;
-        }
-
-        public void setMousePressed(boolean newValue) {
-            if (newValue) {
-                mouseWasPressed = true;
-            }
-            mousePressed = newValue;
-        }
-
-        public void run() {
-            try {
-                grabMouse();
-            } catch (Throwable ex) {
-                ex.printStackTrace();
-                timer.shutdown();
-                recorder.recordingFailed(ex.getMessage());
-            }
-        }
-
-        public synchronized void setStopTime(long newValue) {
-            this.stopTime = newValue;
-        }
-
-        public synchronized long getStopTime() {
-            return this.stopTime;
-        }
-
-        /**
-         * Captures the mouse cursor.
-         */
-        private void grabMouse() throws InterruptedException {
-            long now = System.currentTimeMillis();
-            if (now > getStopTime()) {
-                future.cancel(false);
-                return;
-            }
-            PointerInfo info = MouseInfo.getPointerInfo();
-            Point p = info.getLocation();
-            if (!info.getDevice().equals(captureDevice)
-                    || !captureArea.contains(p)) {
-                // If the cursor is outside the capture region, we
-                // assign Integer.MAX_VALUE to its location.
-                // This ensures that all mouse movements outside of the
-                // capture region get coallesced.
-                p.setLocation(Integer.MAX_VALUE, Integer.MAX_VALUE);
-            }
-
-            // Only create a new capture event if the location has changed
-            if (!p.equals(prevCapturedMouseLocation) || mouseWasPressed != mousePressedRecorded) {
-                Buffer buf = new Buffer();
-                buf.format = format;
-                buf.timeStamp = new Rational(now, 1000);
-                buf.data = p;
-                buf.header = mouseWasPressed;
-                mousePressedRecorded = mouseWasPressed;
-                mouseCaptures.put(buf);
-                prevCapturedMouseLocation.setLocation(p);
-            }
-            if (!mousePressed) {
-                mouseWasPressed = false;
-            }
-        }
-
-        public void close() {
-        }
-    }
-
-    /**
      * Starts audio capture.
      */
     private void startAudioCapture() throws LineUnavailableException {
         audioCaptureTimer = new ScheduledThreadPoolExecutor(1);
-        int delay = 500;
         audioGrabber = new AudioGrabber(mixer, audioFormat, audioTrack, recordingStartTime, writerQueue);
         audioFuture = audioCaptureTimer.scheduleWithFixedDelay(audioGrabber, 0, 10, TimeUnit.MILLISECONDS);
         audioGrabber.setFuture(audioFuture);
@@ -970,7 +534,6 @@ public class BrowserRecorder extends AbstractStateModel {
 
         final private TargetDataLine line;
         final private BlockingQueue<Buffer> queue;
-        final private Format audioFormat;
         final private int audioTrack;
         final private long startTime;
         private volatile long stopTime = Long.MAX_VALUE;
@@ -979,12 +542,9 @@ public class BrowserRecorder extends AbstractStateModel {
         private long sequenceNumber;
         private float audioLevelLeft = AudioSystem.NOT_SPECIFIED;
         private float audioLevelRight = AudioSystem.NOT_SPECIFIED;
-        private Mixer mixer;
 
         public AudioGrabber(Mixer mixer, Format audioFormat, int audioTrack, long startTime, BlockingQueue<Buffer> queue)
                 throws LineUnavailableException {
-            this.mixer = mixer;
-            this.audioFormat = audioFormat;
             this.audioTrack = audioTrack;
             this.queue = queue;
             this.startTime = startTime;
@@ -1148,7 +708,7 @@ public class BrowserRecorder extends AbstractStateModel {
             for (int i = offset; i < length; i += stride) {
                 int value = data[i];
 
-                // FIXME - The java audio system records silence as -128 instead of 0.
+                // TODO FIXME - The java audio system records silence as -128 instead of 0.
                 if (value!=-128) sum += value * value;
             }
             double rms = Math.sqrt(sum / ((length) / stride));
@@ -1168,8 +728,7 @@ public class BrowserRecorder extends AbstractStateModel {
      * Starts file writing.
      */
     private void startWriter() {
-        writerQueue = new ArrayBlockingQueue<Buffer>(
-                max(screenFormat.get(FrameRateKey).intValue(), mouseFormat.get(FrameRateKey).intValue()) + 1);
+        writerQueue = new ArrayBlockingQueue<Buffer>(screenFormat.get(FrameRateKey).intValue() + 1);
         writerThread = new Thread() {
             @Override
             public void run() {
@@ -1214,7 +773,6 @@ public class BrowserRecorder extends AbstractStateModel {
     public void stop() throws IOException {
         if (state == State.RECORDING) {
             recordingStopTime = System.currentTimeMillis();
-            stopMouseCapture();
             if (screenCaptureTimer != null) {
                 browserGrabber.setStopTime(recordingStopTime);
             }
@@ -1222,7 +780,6 @@ public class BrowserRecorder extends AbstractStateModel {
                 audioGrabber.setStopTime(recordingStopTime);
             }
             try {
-                waitUntilMouseCaptureStopped();
                 if (screenCaptureTimer != null) {
                     try {
                         screenFuture.get();
@@ -1310,7 +867,7 @@ public class BrowserRecorder extends AbstractStateModel {
                 writerQueue.put(wbuf);
             } else {// variable frame rate not supported => convert to fixed frame rate
 
-                // FIXME - Use CodecChain for this
+                // TODO FIXME - Use CodecChain for this
 
                 Rational inputTime = buf.timeStamp.add(buf.sampleDuration);
                 boolean isFirst = true;
@@ -1353,9 +910,9 @@ public class BrowserRecorder extends AbstractStateModel {
         // has passed.
         // The if-statement must ensure that we only start a new video file
         // at a key-frame.
-        // FIXME - this assumes that all audio frames are key-frames
-        // FIXME - this does not guarantee that audio and video track have
-        //         the same duration
+        // TODO FIXME - this assumes that all audio frames are key-frames
+        // TODO FIXME - this does not guarantee that audio and video track have
+        // TODO FIXME - the same duration
         long now = System.currentTimeMillis();
         if (buf.track == videoTrack && buf.isFlag(BufferFlag.KEYFRAME)
                 && (mw.isDataLimitReached() || now - fileStartTime > maxRecordingTime)) {
@@ -1374,7 +931,6 @@ public class BrowserRecorder extends AbstractStateModel {
             mw = createMovieWriter();
 
         }
-        //}
         mw.write(buf.track, buf);
     }
 
